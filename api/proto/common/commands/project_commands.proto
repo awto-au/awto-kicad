@@ -80,3 +80,11 @@ message SetTextVariables
   // Whether to merge or replace the existing text variables map with the contents of this message
   kiapi.common.types.MapMergeMode merge_mode = 3;
 }
+
+// Opens editors for the project loaded in the KiCad project manager, as its toolbar buttons do.
+// Handled by the project manager only. Returns google.protobuf.Empty once the editors are open.
+message OpenEditors
+{
+  bool schematic = 1;
+  bool pcb = 2;
+}

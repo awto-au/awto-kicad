@@ -30,6 +30,7 @@
 
 #ifdef KICAD_IPC_API
 #include <api/api_handler_common.h>
+#include "api_handler_kicad.h"
 #endif
 
 /**
@@ -75,6 +76,7 @@ protected:
     // In PGM_SINGLE_TOP because PGM_BASE is in kicommon, and this can't be in the DLL
     // because it depends on things like EDA_TEXT and EDA_SHAPE that aren't in the DLL
     std::unique_ptr<API_HANDLER_COMMON> m_api_common_handler;
+    std::unique_ptr<API_HANDLER_KICAD>  m_api_kicad_handler;   // project-manager-only commands
 #endif
 };
 
