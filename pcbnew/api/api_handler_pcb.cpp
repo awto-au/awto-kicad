@@ -52,6 +52,14 @@
 
 #include <api/common/types/base_types.pb.h>
 #include <connectivity/connectivity_data.h>
+#include <kiface_base.h>
+#include <kiway.h>
+#include <mail_type.h>
+#include <netlist_reader/board_netlist_updater.h>
+#include <netlist_reader/netlist_reader.h>
+#include <netlist_reader/pcb_netlist.h>
+#include <reporter.h>
+#include <richio.h>
 #include <widgets/appearance_controls.h>
 #include <widgets/report_severity.h>
 
@@ -112,6 +120,8 @@ API_HANDLER_PCB::API_HANDLER_PCB( PCB_EDIT_FRAME* aFrame ) :
     registerHandler<GetNetClassForNets, NetClassForNetsResponse>(
             &API_HANDLER_PCB::handleGetNetClassForNets );
     registerHandler<RefillZones, Empty>( &API_HANDLER_PCB::handleRefillZones );
+    registerHandler<UpdatePCBFromSchematic, UpdatePCBFromSchematicResponse>(
+            &API_HANDLER_PCB::handleUpdatePCBFromSchematic );
 
     registerHandler<SaveDocumentToString, SavedDocumentResponse>(
             &API_HANDLER_PCB::handleSaveDocumentToString );
@@ -1944,6 +1954,125 @@ HANDLER_RESULT<Empty> API_HANDLER_PCB::handleRefillZones( const HANDLER_CONTEXT<
     }
 
     return Empty();
+}
+
+
+namespace
+{
+/// Keeps every updater message verbatim, as the F8 dialog's message panel would show it.
+class API_COLLECTING_REPORTER : public REPORTER
+{
+public:
+    REPORTER& Report( const wxString& aText, SEVERITY aSeverity = RPT_SEVERITY_UNDEFINED ) override
+    {
+        m_messages.emplace_back( aText, aSeverity );
+        return *this;
+    }
+
+    bool HasMessage() const override { return !m_messages.empty(); }
+
+    std::vector<std::pair<wxString, SEVERITY>> m_messages;
+};
+} // namespace
+
+
+HANDLER_RESULT<UpdatePCBFromSchematicResponse> API_HANDLER_PCB::handleUpdatePCBFromSchematic(
+        const HANDLER_CONTEXT<UpdatePCBFromSchematic>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    auto fail = []( const std::string& aMessage )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( aMessage );
+        return tl::unexpected( e );
+    };
+
+    // Same preconditions as F8 (PCB_EDIT_FRAME::FetchNetlistFromSchematic), minus the dialogs.
+    if( Kiface().IsSingle() )
+        return fail( "PCB editor is in standalone mode; open the project in the KiCad project manager" );
+
+    if( !frame()->Kiway().Player( FRAME_SCH, false ) )
+        return fail( "schematic editor is not open; open it so the netlist can be fetched" );
+
+    const std::string annotateMsg = "Updating PCB requires a fully annotated schematic.";
+    std::string       payload = annotateMsg;
+    frame()->Kiway().ExpressMail( FRAME_SCH, MAIL_SCH_GET_NETLIST, payload, frame() );
+
+    if( payload == annotateMsg )
+        return fail( annotateMsg );
+
+    // Heap-allocated: the updater may run inside nested event processing.
+    auto netlist = std::make_unique<NETLIST>();
+
+    try
+    {
+        KICAD_NETLIST_READER reader( new STRING_LINE_READER( payload, wxS( "Eeschema netlist" ) ),
+                                     netlist.get() );
+        reader.LoadNetlist();
+    }
+    catch( const IO_ERROR& e )
+    {
+        return fail( "error reading netlist from schematic: " + e.What().ToStdString() );
+    }
+
+    const UpdatePCBFromSchematicOptions& opts = aCtx.Request.options();
+    const bool                           dryRun = aCtx.Request.dry_run();
+
+    // Mirrors DIALOG_UPDATE_PCB::PerformUpdate(), which sets these on the netlist as well.
+    netlist->SetFindByTimeStamp( opts.lookup_by_timestamp() );
+    netlist->SetReplaceFootprints( opts.replace_footprints() );
+
+    if( !dryRun )
+    {
+        frame()->GetToolManager()->DeactivateTool();
+        frame()->GetToolManager()->RunAction( ACTIONS::selectionClear );
+    }
+
+    API_COLLECTING_REPORTER reporter;
+    BOARD_NETLIST_UPDATER   updater( frame(), frame()->GetBoard() );
+    updater.SetReporter( &reporter );
+    updater.SetIsDryRun( dryRun );
+    updater.SetLookupByTimestamp( opts.lookup_by_timestamp() );
+    updater.SetDeleteUnusedFootprints( opts.delete_unused_footprints() );
+    updater.SetReplaceFootprints( opts.replace_footprints() );
+    updater.SetTransferGroups( opts.transfer_groups() );
+    updater.SetOverrideLocks( opts.override_locks() );
+    updater.SetUpdateFields( opts.update_fields() );
+    updater.SetRemoveExtraFields( opts.remove_extra_fields() );
+
+    const bool success = updater.UpdateNetlist( *netlist );
+
+    if( !dryRun )
+    {
+        bool runDragCommand = false;    // new footprints stay where the updater staged them
+        frame()->OnNetlistChanged( updater, &runDragCommand );
+    }
+
+    UpdatePCBFromSchematicResponse response;
+    response.set_success( success );
+    response.set_changes_applied( success && !dryRun );
+
+    for( const auto& [text, severity] : reporter.m_messages )
+    {
+        PCBUpdateMessage* msg = response.add_messages();
+        msg->set_severity( ToProtoEnum<SEVERITY, DrcSeverity>( severity ) );
+        msg->set_text( text.ToStdString() );
+
+        if( severity == RPT_SEVERITY_ERROR )
+            response.set_errors( response.errors() + 1 );
+        else if( severity == RPT_SEVERITY_WARNING )
+            response.set_warnings( response.warnings() + 1 );
+    }
+
+    return response;
 }
 
 

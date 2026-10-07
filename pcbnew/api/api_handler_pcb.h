@@ -150,6 +150,9 @@ private:
 
     HANDLER_RESULT<Empty> handleRefillZones( const HANDLER_CONTEXT<RefillZones>& aCtx );
 
+    HANDLER_RESULT<UpdatePCBFromSchematicResponse> handleUpdatePCBFromSchematic(
+            const HANDLER_CONTEXT<UpdatePCBFromSchematic>& aCtx );
+
     HANDLER_RESULT<commands::SavedDocumentResponse> handleSaveDocumentToString(
                 const HANDLER_CONTEXT<commands::SaveDocumentToString>& aCtx );
 

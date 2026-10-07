@@ -237,6 +237,43 @@ message RefillZones
   repeated kiapi.common.types.KIID zones = 2;
 }
 
+// Mirrors the Update PCB from Schematic dialog's checkboxes.
+message UpdatePCBFromSchematicOptions
+{
+  bool lookup_by_timestamp      = 1;  // match footprints by symbol UUID path, not reference
+  bool replace_footprints       = 2;  // swap footprints whose library ID changed
+  bool delete_unused_footprints = 3;
+  bool override_locks           = 4;
+  bool update_fields            = 5;
+  bool remove_extra_fields      = 6;
+  bool transfer_groups          = 7;
+}
+
+// Runs BOARD_NETLIST_UPDATER (the engine behind F8) without the dialog.
+// Needs the project open in the KiCad project manager (not standalone pcbnew).
+// Returns UpdatePCBFromSchematicResponse
+message UpdatePCBFromSchematic
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+  UpdatePCBFromSchematicOptions options = 2;
+  bool dry_run = 3;  // report what would change, change nothing
+}
+
+message PCBUpdateMessage
+{
+  DrcSeverity severity = 1;  // reporter severity (info, action, warning, error, ...)
+  string text = 2;  // exactly as the dialog's message panel shows it
+}
+
+message UpdatePCBFromSchematicResponse
+{
+  bool success = 1;          // BOARD_NETLIST_UPDATER::UpdateNetlist() result
+  bool changes_applied = 2;  // false for a dry run
+  int32 errors = 3;
+  int32 warnings = 4;
+  repeated PCBUpdateMessage messages = 5;
+}
+
 /*
  * Utilities
  */
