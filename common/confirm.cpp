@@ -31,12 +31,28 @@
 #include <wx/msgdlg.h>
 #include <wx/choicdlg.h>
 #include <wx/crt.h>
+#include <wx/utils.h>
 /**
  * Flag to enable confirmation dialog debugging output.
  *
  * @ingroup trace_env_vars
  */
 static const wxChar traceConfirm[] = wxT( "KICAD_CONFIRM" );
+
+
+/// KICAD_SUPPRESS_INFO_DIALOGS=1: OK-only info/error boxes go to stderr instead of blocking a
+/// scripted (IPC API) session. Questions (IsOK, KIDIALOG, ...) still show; they need an answer.
+static bool suppressInfoDialogs( const wxString& aKind, const wxString& aText,
+                                 const wxString& aExtraInfo = wxEmptyString )
+{
+    static const bool suppress = wxGetEnv( wxS( "KICAD_SUPPRESS_INFO_DIALOGS" ), nullptr );
+
+    if( !suppress )
+        return false;
+
+    wxFprintf( stderr, wxS( "KiCad %s (dialog suppressed): %s %s\n" ), aKind, aText, aExtraInfo );
+    return true;
+}
 
 
 bool AskOverrideLock( wxWindow* aParent, const wxString& aMessage )
@@ -207,6 +223,9 @@ void DisplayError( wxWindow* aParent, const wxString& aText )
         return;
     }
 
+    if( suppressInfoDialogs( wxS( "error" ), aText ) )
+        return;
+
     KICAD_MESSAGE_DIALOG_BASE* dlg;
 
     dlg = new KICAD_MESSAGE_DIALOG_BASE( aParent, aText, _( "Error" ),
@@ -231,6 +250,9 @@ void DisplayErrorMessage( wxWindow* aParent, const wxString& aText, const wxStri
         wxFprintf( stderr, aText );
         return;
     }
+
+    if( suppressInfoDialogs( wxS( "error" ), aText, aExtraInfo ) )
+        return;
 
     KICAD_MESSAGE_DIALOG_BASE* dlg;
 
@@ -259,6 +281,9 @@ void DisplayInfoMessage( wxWindow* aParent, const wxString& aMessage, const wxSt
         wxFprintf( stdout, "%s %s", aMessage, aExtraInfo );
         return;
     }
+
+    if( suppressInfoDialogs( wxS( "info" ), aMessage, aExtraInfo ) )
+        return;
 
     KICAD_MESSAGE_DIALOG_BASE* dlg;
     int              icon = wxICON_INFORMATION;
