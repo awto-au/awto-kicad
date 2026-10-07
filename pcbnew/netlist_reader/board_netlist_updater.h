@@ -73,7 +73,7 @@ public:
     BOARD_NETLIST_UPDATER( PCB_EDIT_FRAME* aFrame, BOARD* aBoard );
 
     /// Headless (kicad-cli): no editor frame. Footprints load from the board's project library
-    /// tables; footprint replacement (ExchangeFootprint) is reported as unsupported.
+    /// tables; replacement uses ExchangeFootprintOnBoard() (footprint_exchange.h).
     BOARD_NETLIST_UPDATER( TOOL_MANAGER* aToolMgr, BOARD* aBoard );
     ~BOARD_NETLIST_UPDATER();
 

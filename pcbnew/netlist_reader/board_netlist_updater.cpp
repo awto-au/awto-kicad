@@ -43,6 +43,8 @@
 #include <string_utils.h>
 #include <pcbnew_settings.h>
 #include <pcb_edit_frame.h>
+#include <footprint_exchange.h>
+#include <settings/settings_manager.h>
 #include <project_pcb.h>
 #include <footprint_library_adapter.h>
 #include <netlist_reader/pcb_netlist.h>
@@ -412,20 +414,6 @@ FOOTPRINT* BOARD_NETLIST_UPDATER::replaceFootprint( NETLIST& aNetlist, FOOTPRINT
     }
     else
     {
-        if( !m_frame )
-        {
-            // ExchangeFootprint() lives on PCB_EDIT_FRAME; not available headless yet.
-            msg.Printf( _( "Could not change %s footprint from '%s' to '%s' (footprint replacement "
-                           "is not supported without the PCB editor)." ),
-                        aFootprint->GetReference(),
-                        EscapeHTML( aFootprint->GetFPID().Format().wx_str() ),
-                        EscapeHTML( aNewComponent->GetFPID().Format().wx_str() ) );
-            m_reporter->Report( msg, RPT_SEVERITY_ERROR );
-            ++m_errorCount;
-            delete newFootprint;
-            return nullptr;
-        }
-
         if( aFootprint->IsLocked() && !m_overrideLocks )
         {
             msg.Printf( _( "Could not change %s footprint from '%s' to '%s' (footprint is locked)."),
@@ -442,7 +430,25 @@ FOOTPRINT* BOARD_NETLIST_UPDATER::replaceFootprint( NETLIST& aNetlist, FOOTPRINT
              // Expand the footprint pad layers
              newFootprint->FixUpPadsForBoard( m_board );
 
-             m_frame->ExchangeFootprint( aFootprint, newFootprint, m_commit );
+             if( m_frame )
+             {
+                 m_frame->ExchangeFootprint( aFootprint, newFootprint, m_commit );
+             }
+             else
+             {
+                 // Headless: same exchange; flip direction from the user's settings, else the
+                 // PCBNEW_SETTINGS default. No undo list to maintain, so placement is a move.
+                 FLIP_DIRECTION flipDir = FLIP_DIRECTION::TOP_BOTTOM;
+
+                 if( PCBNEW_SETTINGS* cfg = GetAppSettings<PCBNEW_SETTINGS>( "pcbnew" ) )
+                     flipDir = cfg->m_FlipDirection;
+
+                 ExchangeFootprintOnBoard( m_board, aFootprint, newFootprint, m_commit, flipDir,
+                                           []( FOOTPRINT* aFp, const VECTOR2I& aPos )
+                                           {
+                                               aFp->SetPosition( aPos );
+                                           } );
+             }
 
              msg.Printf( _( "Changed %s footprint from '%s' to '%s'."),
                          aFootprint->GetReference(),

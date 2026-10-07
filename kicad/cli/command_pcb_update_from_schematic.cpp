@@ -46,8 +46,7 @@ CLI::PCB_UPDATE_FROM_SCHEMATIC_COMMAND::PCB_UPDATE_FROM_SCHEMATIC_COMMAND() :
             .help( UTF8STDSTR( _( "Re-link footprints to schematic symbols by reference" ) ) )
             .flag();
     m_argParser.add_argument( ARG_REPLACE )
-            .help( UTF8STDSTR( _( "Replace footprints whose library ID changed (not yet supported "
-                                  "headless; reported as an error)" ) ) )
+            .help( UTF8STDSTR( _( "Replace footprints whose library ID changed" ) ) )
             .flag();
     m_argParser.add_argument( ARG_DELETE_UNUSED )
             .help( UTF8STDSTR( _( "Delete footprints with no schematic symbol" ) ) )

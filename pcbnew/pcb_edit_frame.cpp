@@ -41,6 +41,7 @@
 #include <settings/color_settings.h>
 #include <pgm_base.h>
 #include <pcb_edit_frame.h>
+#include <footprint_exchange.h>
 #include <3d_viewer/eda_3d_viewer_frame.h>
 #include <api/api_plugin_manager.h>
 #include <geometry/geometry_utils.h>
@@ -2588,17 +2589,18 @@ static std::vector<std::pair<T*, T*>> matchItemsBySimilarity( const std::vector<
 }
 
 
-void PCB_EDIT_FRAME::ExchangeFootprint( FOOTPRINT* aExisting, FOOTPRINT* aNew,
-                                        BOARD_COMMIT& aCommit,
-                                        bool deleteExtraTexts,
-                                        bool resetTextLayers,
-                                        bool resetTextEffects,
-                                        bool resetTextPositions,
-                                        bool resetTextContent,
-                                        bool resetFabricationAttrs,
-                                        bool resetClearanceOverrides,
-                                        bool reset3DModels,
-                                        bool* aUpdated )
+void ExchangeFootprintOnBoard( BOARD* aBoard, FOOTPRINT* aExisting, FOOTPRINT* aNew,
+                               BOARD_COMMIT& aCommit, FLIP_DIRECTION aFlipDirection,
+                               const std::function<void( FOOTPRINT*, const VECTOR2I& )>& aPlace,
+                               bool deleteExtraTexts,
+                               bool resetTextLayers,
+                               bool resetTextEffects,
+                               bool resetTextPositions,
+                               bool resetTextContent,
+                               bool resetFabricationAttrs,
+                               bool resetClearanceOverrides,
+                               bool reset3DModels,
+                               bool* aUpdated )
 {
     EDA_GROUP* parentGroup = aExisting->GetParentGroup();
     bool       dummyBool   = false;
@@ -2613,12 +2615,12 @@ void PCB_EDIT_FRAME::ExchangeFootprint( FOOTPRINT* aExisting, FOOTPRINT* aNew,
         parentGroup->AddItem( aNew );
     }
 
-    aNew->SetParent( GetBoard() );
+    aNew->SetParent( aBoard );
 
-    PlaceFootprint( aNew, false, aExisting->GetPosition() );
+    aPlace( aNew, aExisting->GetPosition() );
 
     if( aNew->GetLayer() != aExisting->GetLayer() )
-        aNew->Flip( aNew->GetPosition(), GetPcbNewSettings()->m_FlipDirection );
+        aNew->Flip( aNew->GetPosition(), aFlipDirection );
 
     if( aNew->GetOrientation() != aExisting->GetOrientation() )
         aNew->SetOrientation( aExisting->GetOrientation() );
@@ -3061,6 +3063,30 @@ void PCB_EDIT_FRAME::ExchangeFootprint( FOOTPRINT* aExisting, FOOTPRINT* aNew,
     aNew->ClearFlags();
 }
 
+
+
+void PCB_EDIT_FRAME::ExchangeFootprint( FOOTPRINT* aExisting, FOOTPRINT* aNew,
+                                        BOARD_COMMIT& aCommit,
+                                        bool deleteExtraTexts,
+                                        bool resetTextLayers,
+                                        bool resetTextEffects,
+                                        bool resetTextPositions,
+                                        bool resetTextContent,
+                                        bool resetFabricationAttrs,
+                                        bool resetClearanceOverrides,
+                                        bool reset3DModels,
+                                        bool* aUpdated )
+{
+    ExchangeFootprintOnBoard( GetBoard(), aExisting, aNew, aCommit,
+                              GetPcbNewSettings()->m_FlipDirection,
+                              [this]( FOOTPRINT* aFootprint, const VECTOR2I& aPos )
+                              {
+                                  PlaceFootprint( aFootprint, false, aPos );
+                              },
+                              deleteExtraTexts, resetTextLayers, resetTextEffects,
+                              resetTextPositions, resetTextContent, resetFabricationAttrs,
+                              resetClearanceOverrides, reset3DModels, aUpdated );
+}
 
 void PCB_EDIT_FRAME::CommonSettingsChanged( int aFlags )
 {
