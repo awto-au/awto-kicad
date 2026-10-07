@@ -43,6 +43,8 @@
 #include <string_utils.h>
 #include <pcbnew_settings.h>
 #include <pcb_edit_frame.h>
+#include <project_pcb.h>
+#include <footprint_library_adapter.h>
 #include <netlist_reader/pcb_netlist.h>
 #include <connectivity/connectivity_data.h>
 #include <reporter.h>
@@ -55,6 +57,52 @@ BOARD_NETLIST_UPDATER::BOARD_NETLIST_UPDATER( PCB_EDIT_FRAME* aFrame, BOARD* aBo
     m_frame( aFrame ),
     m_commit( aFrame ),
     m_board( aBoard )
+{
+    init();
+}
+
+
+BOARD_NETLIST_UPDATER::BOARD_NETLIST_UPDATER( TOOL_MANAGER* aToolMgr, BOARD* aBoard ) :
+    m_frame( nullptr ),
+    m_commit( aToolMgr ),
+    m_board( aBoard )
+{
+    init();
+}
+
+
+FOOTPRINT* BOARD_NETLIST_UPDATER::loadFootprint( const LIB_ID& aFootprintId )
+{
+    if( m_frame )
+        return m_frame->LoadFootprint( aFootprintId );
+
+    // Mirrors PCB_BASE_FRAME::loadFootprint() for the board editor case.
+    FOOTPRINT_LIBRARY_ADAPTER* adapter = PROJECT_PCB::FootprintLibAdapter( m_board->GetProject() );
+    FOOTPRINT*                 footprint = nullptr;
+
+    try
+    {
+        footprint = adapter->LoadFootprintWithOptionalNickname( aFootprintId, false );
+    }
+    catch( const IO_ERROR& )
+    {
+    }
+
+    if( footprint )
+    {
+        footprint->ClearAllNets();
+
+        BOARD_DESIGN_SETTINGS& bds = m_board->GetDesignSettings();
+        footprint->ApplyDefaultSettings( *m_board, bds.m_StyleFPFields, bds.m_StyleFPText,
+                                         bds.m_StyleFPShapes, bds.m_StyleFPDimensions,
+                                         bds.m_StyleFPBarcodes );
+    }
+
+    return footprint;
+}
+
+
+void BOARD_NETLIST_UPDATER::init()
 {
     m_reporter = &NULL_REPORTER::GetInstance();
 
@@ -159,7 +207,7 @@ FOOTPRINT* BOARD_NETLIST_UPDATER::addNewFootprint( COMPONENT* aComponent, const 
         return nullptr;
     }
 
-    FOOTPRINT* footprint = m_frame->LoadFootprint( aFootprintId );
+    FOOTPRINT* footprint = loadFootprint( aFootprintId );
 
     if( footprint == nullptr )
     {
@@ -188,7 +236,8 @@ FOOTPRINT* BOARD_NETLIST_UPDATER::addNewFootprint( COMPONENT* aComponent, const 
         for( PAD* pad : footprint->Pads() )
         {
             // Set the pads ratsnest settings to the global settings
-            pad->SetLocalRatsnestVisible( m_frame->GetPcbNewSettings()->m_Display.m_ShowGlobalRatsnest );
+            if( m_frame )
+                pad->SetLocalRatsnestVisible( m_frame->GetPcbNewSettings()->m_Display.m_ShowGlobalRatsnest );
 
             // Pads in the library all have orphaned nets.  Replace with Default.
             pad->SetNetCode( 0 );
@@ -324,7 +373,7 @@ FOOTPRINT* BOARD_NETLIST_UPDATER::replaceFootprint( NETLIST& aNetlist, FOOTPRINT
         return nullptr;
     }
 
-    FOOTPRINT* newFootprint = m_frame->LoadFootprint( aNewComponent->GetFPID() );
+    FOOTPRINT* newFootprint = loadFootprint( aNewComponent->GetFPID() );
 
     if( newFootprint == nullptr )
     {
@@ -363,6 +412,20 @@ FOOTPRINT* BOARD_NETLIST_UPDATER::replaceFootprint( NETLIST& aNetlist, FOOTPRINT
     }
     else
     {
+        if( !m_frame )
+        {
+            // ExchangeFootprint() lives on PCB_EDIT_FRAME; not available headless yet.
+            msg.Printf( _( "Could not change %s footprint from '%s' to '%s' (footprint replacement "
+                           "is not supported without the PCB editor)." ),
+                        aFootprint->GetReference(),
+                        EscapeHTML( aFootprint->GetFPID().Format().wx_str() ),
+                        EscapeHTML( aNewComponent->GetFPID().Format().wx_str() ) );
+            m_reporter->Report( msg, RPT_SEVERITY_ERROR );
+            ++m_errorCount;
+            delete newFootprint;
+            return nullptr;
+        }
+
         if( aFootprint->IsLocked() && !m_overrideLocks )
         {
             msg.Printf( _( "Could not change %s footprint from '%s' to '%s' (footprint is locked)."),

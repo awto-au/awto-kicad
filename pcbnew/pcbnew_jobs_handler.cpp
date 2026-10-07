@@ -58,6 +58,11 @@
 #include <jobs/job_pcb_drc.h>
 #include <jobs/job_pcb_import.h>
 #include <jobs/job_pcb_upgrade.h>
+#include <jobs/job_pcb_update_from_schematic.h>
+#include <autorouter/spread_footprints.h>
+#include <component_classes/component_class_manager.h>
+#include <netlist_reader/board_netlist_updater.h>
+#include <mail_type.h>
 #include <eda_units.h>
 #include <footprint_library_adapter.h>
 #include <lset.h>
@@ -155,6 +160,12 @@ PCBNEW_JOBS_HANDLER::PCBNEW_JOBS_HANDLER( KIWAY* aKiway ) :
                   return dlg.ShowModal() == wxID_OK;
               } );
     Register( "upgrade", std::bind( &PCBNEW_JOBS_HANDLER::JobUpgrade, this, std::placeholders::_1 ),
+              []( JOB* job, wxWindow* aParent ) -> bool
+              {
+                  return true;
+              } );
+    Register( "pcb_update_from_schematic",
+              std::bind( &PCBNEW_JOBS_HANDLER::JobUpdateFromSchematic, this, std::placeholders::_1 ),
               []( JOB* job, wxWindow* aParent ) -> bool
               {
                   return true;
@@ -2705,6 +2716,129 @@ int PCBNEW_JOBS_HANDLER::JobUpgrade( JOB* aJob )
 
     return CLI::EXIT_CODES::SUCCESS;
 }
+
+int PCBNEW_JOBS_HANDLER::JobUpdateFromSchematic( JOB* aJob )
+{
+    JOB_PCB_UPDATE_FROM_SCHEMATIC* job = dynamic_cast<JOB_PCB_UPDATE_FROM_SCHEMATIC*>( aJob );
+
+    if( job == nullptr )
+        return CLI::EXIT_CODES::ERR_UNKNOWN;
+
+    BOARD* brd = getBoard( job->m_filename );
+
+    if( !brd )
+        return CLI::EXIT_CODES::ERR_INVALID_INPUT_FILE;
+
+    // New or replaced footprints come from the libraries, so load them as DRC does.
+    FOOTPRINT_LIBRARY_ADAPTER* adapter = PROJECT_PCB::FootprintLibAdapter( brd->GetProject() );
+    adapter->AsyncLoad();
+    adapter->BlockUntilLoaded();
+
+    const wxString annotateMsg = _( "Updating PCB requires a fully annotated schematic." );
+    std::string    netlistStr;
+
+    if( m_kiway->Player( FRAME_SCH, false ) )
+    {
+        netlistStr = annotateMsg.ToStdString();
+        m_kiway->ExpressMail( FRAME_SCH, MAIL_SCH_GET_NETLIST, netlistStr );
+
+        if( netlistStr == annotateMsg.ToStdString() )
+        {
+            m_reporter->Report( annotateMsg + wxT( "\n" ), RPT_SEVERITY_ERROR );
+            return CLI::EXIT_CODES::ERR_UNKNOWN;
+        }
+    }
+    else
+    {
+        wxFileName schematicPath( brd->GetFileName() );
+        schematicPath.SetExt( FILEEXT::KiCadSchematicFileExtension );
+
+        typedef bool ( *NETLIST_FN_PTR )( const wxString&, std::string& );
+        KIFACE*        eeschema = m_kiway->KiFACE( KIWAY::FACE_SCH );
+        NETLIST_FN_PTR netlister = eeschema ? (NETLIST_FN_PTR) eeschema->IfaceOrAddress(
+                                                      KIFACE_NETLIST_SCHEMATIC )
+                                            : nullptr;
+
+        if( !schematicPath.Exists() || !netlister
+            || !( *netlister )( schematicPath.GetFullPath(), netlistStr ) )
+        {
+            m_reporter->Report( wxString::Format( _( "Failed to fetch schematic netlist from '%s'.\n" ),
+                                                  schematicPath.GetFullPath() ),
+                                RPT_SEVERITY_ERROR );
+            return CLI::EXIT_CODES::ERR_INVALID_INPUT_FILE;
+        }
+    }
+
+    auto netlist = std::make_unique<NETLIST>();
+
+    try
+    {
+        KICAD_NETLIST_READER reader( new STRING_LINE_READER( netlistStr, _( "Eeschema netlist" ) ),
+                                     netlist.get() );
+        reader.LoadNetlist();
+    }
+    catch( const IO_ERROR& e )
+    {
+        m_reporter->Report( wxString::Format( _( "Error reading schematic netlist: %s\n" ), e.What() ),
+                            RPT_SEVERITY_ERROR );
+        return CLI::EXIT_CODES::ERR_UNKNOWN;
+    }
+
+    // Same option wiring as DIALOG_UPDATE_PCB::PerformUpdate().
+    netlist->SetFindByTimeStamp( !job->m_relinkFootprints );
+    netlist->SetReplaceFootprints( job->m_replaceFootprints );
+
+    BOARD_NETLIST_UPDATER updater( getToolManager( brd ), brd );
+    updater.SetReporter( m_reporter );
+    updater.SetIsDryRun( job->m_dryRun );
+    updater.SetLookupByTimestamp( !job->m_relinkFootprints );
+    updater.SetDeleteUnusedFootprints( job->m_deleteUnusedFootprints );
+    updater.SetReplaceFootprints( job->m_replaceFootprints );
+    updater.SetTransferGroups( job->m_transferGroups );
+    updater.SetOverrideLocks( job->m_overrideLocks );
+    updater.SetUpdateFields( job->m_updateFields );
+    updater.SetRemoveExtraFields( job->m_removeExtraFields );
+
+    if( !updater.UpdateNetlist( *netlist ) && !job->m_dryRun )
+    {
+        m_reporter->Report( _( "Update PCB from schematic failed.\n" ), RPT_SEVERITY_ERROR );
+        return CLI::EXIT_CODES::ERR_UNKNOWN;
+    }
+
+    if( job->m_dryRun )
+        return CLI::EXIT_CODES::SUCCESS;
+
+    // The model-side steps of PCB_EDIT_FRAME::OnNetlistChanged(); the rest is display.
+    brd->SynchronizeNetsAndNetClasses( false );
+    brd->GetComponentClassManager().InvalidateComponentClasses();
+    brd->GetComponentClassManager().RebuildRequiredCaches();
+
+    std::vector<FOOTPRINT*> newFootprints = updater.GetAddedFootprints();
+
+    if( !newFootprints.empty() )
+        SpreadFootprints( &newFootprints, { 0, 0 }, true );
+
+    wxString outPath = job->GetConfiguredOutputPath().IsEmpty() ? brd->GetFileName()
+                                                                : resolveJobOutputPath( aJob, brd );
+
+    try
+    {
+        IO_RELEASER<PCB_IO> pi( PCB_IO_MGR::FindPlugin( PCB_IO_MGR::KICAD_SEXP ) );
+        pi->SaveBoard( outPath, brd );
+    }
+    catch( const IO_ERROR& ioe )
+    {
+        m_reporter->Report( wxString::Format( _( "Error saving board file '%s'.\n%s" ), outPath,
+                                              ioe.What() ),
+                            RPT_SEVERITY_ERROR );
+        return CLI::EXIT_CODES::ERR_UNKNOWN;
+    }
+
+    m_reporter->Report( wxString::Format( _( "Saved updated board to '%s'.\n" ), outPath ),
+                        RPT_SEVERITY_ACTION );
+    return CLI::EXIT_CODES::SUCCESS;
+}
+
 
 // Most job handlers need to align the running job with the board before resolving any
 // output paths with variables in them like ${REVISION}.

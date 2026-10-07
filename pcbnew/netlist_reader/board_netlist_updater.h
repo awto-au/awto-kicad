@@ -39,6 +39,7 @@ class NETINFO_ITEM;
 class PAD;
 class PCB_EDIT_FRAME;
 class PCB_GROUP;
+class TOOL_MANAGER;
 
 #include <board_commit.h>
 
@@ -70,6 +71,10 @@ class BOARD_NETLIST_UPDATER
 {
 public:
     BOARD_NETLIST_UPDATER( PCB_EDIT_FRAME* aFrame, BOARD* aBoard );
+
+    /// Headless (kicad-cli): no editor frame. Footprints load from the board's project library
+    /// tables; footprint replacement (ExchangeFootprint) is reported as unsupported.
+    BOARD_NETLIST_UPDATER( TOOL_MANAGER* aToolMgr, BOARD* aBoard );
     ~BOARD_NETLIST_UPDATER();
 
     /**
@@ -124,6 +129,11 @@ private:
     wxString getPinFunction( PAD* aPad );
 
     VECTOR2I estimateFootprintInsertionPosition();
+
+    void init();
+
+    /// Frame's LoadFootprint() when there is one, else the board project's footprint libraries.
+    FOOTPRINT* loadFootprint( const LIB_ID& aFootprintId );
 
     FOOTPRINT* addNewFootprint( COMPONENT* aComponent );
     FOOTPRINT* addNewFootprint( COMPONENT* aComponent, const LIB_ID& aFootprintId );
