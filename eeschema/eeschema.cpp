@@ -88,77 +88,24 @@ namespace SCH {
 
 
 // TODO: This should move out of this file
-static std::unique_ptr<SCHEMATIC> readSchematicFromFile( const std::string& aFilename )
-{
-    SCH_IO* pi = SCH_IO_MGR::FindPlugin( SCH_IO_MGR::SCH_KICAD );
-    std::unique_ptr<SCHEMATIC> schematic = std::make_unique<SCHEMATIC>( nullptr );
-
-    SETTINGS_MANAGER& manager = Pgm().GetSettingsManager();
-
-    wxFileName pro( aFilename );
-    pro.SetExt( FILEEXT::ProjectFileExtension );
-    pro.MakeAbsolute();
-    wxString projectPath = pro.GetFullPath();
-
-    PROJECT* project = manager.GetProject( projectPath );
-
-    if( !project )
-    {
-        manager.LoadProject( projectPath, true );
-        project = manager.GetProject( projectPath );
-    }
-
-    schematic->Reset();
-    schematic->SetProject( project );
-    SCH_SHEET* rootSheet = pi->LoadSchematicFile( aFilename, schematic.get() );
-
-    if( !rootSheet )
-        return nullptr;
-
-    schematic->SetTopLevelSheets( { rootSheet } );
-
-    SCH_SCREENS screens( schematic->Root() );
-
-    for( SCH_SCREEN* screen = screens.GetFirst(); screen; screen = screens.GetNext() )
-        screen->UpdateLocalLibSymbolLinks();
-
-    SCH_SHEET_LIST sheets = schematic->Hierarchy();
-
-    // Restore all of the loaded symbol instances from the root sheet screen.
-    sheets.UpdateSymbolInstanceData( schematic->RootScreen()->GetSymbolInstances() );
-
-    if( schematic->RootScreen()->GetFileFormatVersionAtLoad() < 20230221 )
-    {
-        for( SCH_SCREEN* screen = screens.GetFirst(); screen; screen = screens.GetNext() )
-            screen->FixLegacyPowerSymbolMismatches();
-    }
-
-    for( SCH_SCREEN* screen = screens.GetFirst(); screen; screen = screens.GetNext() )
-        screen->MigrateSimModels();
-
-    sheets.AnnotatePowerSymbols();
-
-    // NOTE: This is required for multi-unit symbols to be correct
-    for( SCH_SHEET_PATH& sheet : sheets )
-        sheet.UpdateAllScreenReferences();
-
-    // TODO: this must handle SchematicCleanup somehow.  The original version didn't because
-    // it knew that QA test cases were saved in a clean state.
-
-    // TODO: does this need to handle PruneOrphanedSymbolInstances() and
-    // PruneOrphanedSheetInstances()?
-
-    schematic->ConnectionGraph()->Recalculate( sheets, true );
-
-    return schematic;
-}
-
-
-// TODO: This should move out of this file
 bool generateSchematicNetlist( const wxString& aFilename, std::string& aNetlist )
 {
-    std::unique_ptr<SCHEMATIC> schematic = readSchematicFromFile( aFilename.ToStdString() );
-    NETLIST_EXPORTER_KICAD exporter( schematic.get() );
+    // Same loader as `kicad-cli sch export netlist` (GLOBAL_CLEANUP connectivity). The bare
+    // readSchematicFromFile() skipped that and dropped pins from auto-named nets, which made
+    // `kicad-cli pcb drc --schematic-parity` report false "No corresponding pin" errors.
+    SCHEMATIC* loaded = EESCHEMA_HELPERS::LoadSchematic( aFilename, false, false );
+
+    if( !loaded )
+        return false;
+
+    // LoadSchematic() hands back the open editor's schematic when there is one; never free that.
+    std::unique_ptr<SCHEMATIC> owned;
+    SCH_EDIT_FRAME*            frame = EESCHEMA_HELPERS::GetSchEditFrame();
+
+    if( !frame || loaded != &frame->Schematic() )
+        owned.reset( loaded );
+
+    NETLIST_EXPORTER_KICAD exporter( loaded );
     STRING_FORMATTER formatter;
 
     exporter.Format( &formatter, GNL_ALL | GNL_OPT_KICAD );

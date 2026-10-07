@@ -42,6 +42,7 @@ class EESCHEMA_HELPERS
 {
 public:
     static void              SetSchEditFrame( SCH_EDIT_FRAME* aSchEditFrame );
+    static SCH_EDIT_FRAME*   GetSchEditFrame() { return s_SchEditFrame; }
     static SCHEMATIC*        LoadSchematic( const wxString& aFileName, bool aSetActive,
                                             bool aForceDefaultProject,
                                             PROJECT* aProject = nullptr,
