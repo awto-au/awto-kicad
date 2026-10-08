@@ -83,6 +83,7 @@
 #include "cli/command_sch.h"
 #include "cli/command_sch_erc.h"
 #include "cli/command_sch_export.h"
+#include "cli/command_sch_import.h"
 #include "cli/command_sch_upgrade.h"
 #include "cli/command_sym.h"
 #include "cli/command_sym_export.h"
@@ -158,6 +159,7 @@ static CLI::PCB_EXPORT_COMMAND           exportPcbCmd{};
 static CLI::SCH_EXPORT_COMMAND           exportSchCmd{};
 static CLI::SCH_COMMAND                  schCmd{};
 static CLI::SCH_ERC_COMMAND              schErcCmd{};
+static CLI::SCH_IMPORT_COMMAND           schImportCmd{};
 static CLI::SCH_UPGRADE_COMMAND          schUpgradeCmd{};
 static CLI::SCH_EXPORT_BOM_COMMAND       exportSchBomCmd{};
 static CLI::SCH_EXPORT_PYTHONBOM_COMMAND exportSchPythonBomCmd{};
@@ -255,6 +257,9 @@ static std::vector<COMMAND_ENTRY> commandStack = {
         {
             {
                 &schErcCmd
+            },
+            {
+                &schImportCmd
             },
             {
                 &exportSchCmd,

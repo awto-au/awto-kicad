@@ -164,6 +164,7 @@ set( KICOMMON_SRCS
     jobs/job_sym_upgrade.cpp
     jobs/job_pcb_upgrade.cpp
     jobs/job_pcb_update_from_schematic.cpp
+    jobs/job_sch_import.cpp
     jobs/job_sch_upgrade.cpp
 
     local_history.cpp

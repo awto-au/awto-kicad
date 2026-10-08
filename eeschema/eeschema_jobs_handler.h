@@ -47,6 +47,9 @@ public:
     int JobSymExportSvg( JOB* aJob );
     int JobUpgrade( JOB* aJob );
 
+    /// Import a non-KiCad schematic or Altium project headlessly (the GUI's importFile, frame-free).
+    int JobImport( JOB* aJob );
+
     /**
      * Configure the SCH_RENDER_SETTINGS object with the correct data to be used with plotting.
      *
